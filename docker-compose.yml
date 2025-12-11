@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  charge-anywhere-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: charge-anywhere-country-tool
+    ports:
+      - "5011:5000"
+    environment:
+      # Environment variables - override these in a .env file
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+    env_file:
+      - .env
+    volumes:
+      # Mount .env file for environment variables
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - charge-anywhere-network
+
+networks:
+  charge-anywhere-network:
+    driver: bridge
+
+# Optional: Development override
+# Use: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+# ---
+# version: '3.8'
+# 
+# services:
+#   charge-anywhere-app:
+#     volumes:
+#       - .:/app
+#       - /app/__pycache__
+#     environment:
+#       - FLASK_DEBUG=1
+#       - FLASK_ENV=development
