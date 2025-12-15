@@ -1,12 +1,15 @@
 # Charge Anywhere Country Change Tool
 
-A Flask web application for changing merchant country settings via the Charge Anywhere Partner Portal API.
+A Flask web application for changing merchant country settings via the Charge Anywhere Partner Portal API with automatic batch closing for error code 175.
 
 ## Features
 
 - **Web Interface**: Clean, responsive UI for entering merchant information
 - **Country Selection**: Dropdown with supported countries (US, Canada, Australia)
+- **Terminal ID Support**: Required for batch closing operations
 - **SOAP Integration**: Direct integration with Charge Anywhere API
+- **Automatic Batch Closing**: Handles error code 175 by automatically closing open batches
+- **Timezone Conversion**: Uses New York timezone for batch export dates
 - **Error Handling**: Comprehensive error handling and response parsing
 - **Extensible Design**: Built to easily add more merchant update features
 - **Docker Support**: Full containerization with Docker and Docker Compose
@@ -47,6 +50,8 @@ A Flask web application for changing merchant country settings via the Charge An
    CHANNEL_NAME=your_actual_channel_name
    USERNAME=your_actual_username
    PASSWORD=your_actual_password
+   CLIENT_KEY=your_client_key
+   CLIENT_SECRET=your_client_secret
    ```
 
 ### Option 2: Docker Installation
@@ -95,9 +100,15 @@ The application can also be run using Docker for easy deployment and management.
 
 3. **Change merchant country**
    - Enter the Merchant ID (MID) in the text field
+   - Enter the Terminal ID (TID) in the text field
    - Select a country from the dropdown
    - Click "Change Country" button
    - View the API response
+
+   **Note**: If an open batch exists (error code 175), the application will automatically:
+   1. Export batch data to get EMID and identification
+   2. Close the batch using the Transaction API
+   3. Retry the country change operation
 
 ## Docker Commands
 
@@ -134,7 +145,7 @@ docker-compose down --volumes --remove-orphans
 ## API Endpoints
 
 - `GET /` - Main page with country change form
-- `POST /update_country` - API endpoint for country changes
+- `POST /update_country` - API endpoint for country changes with automatic batch closing
 - `GET /health` - Health check endpoint
 
 ## Configuration
@@ -146,6 +157,8 @@ docker-compose down --volumes --remove-orphans
 | `CHANNEL_NAME` | Charge Anywhere channel name | Yes |
 | `USERNAME` | API username | Yes |
 | `PASSWORD` | API password | Yes |
+| `CLIENT_KEY` | Client key for batch operations | Yes |
+| `CLIENT_SECRET` | Client secret for batch operations | Yes |
 
 ### SOAP Request Structure
 
@@ -183,7 +196,7 @@ The application sends SOAP requests with the following structure:
 
 ## Response Handling
 
-The application handles two types of responses:
+The application handles different types of responses:
 
 ### Success Response (ResponseCode: 1)
 ```xml
@@ -191,18 +204,68 @@ The application handles two types of responses:
 <ResponseText>SUCCESS. Update Merchant Info.</ResponseText>
 ```
 
-### Error Response (ResponseCode: ≠ 1)
+### Open Batch Error (ResponseCode: 175)
 ```xml
 <ResponseCode>175</ResponseCode>
 <ResponseText>An open batch exists for this device. Please close the batch then try again!.</ResponseText>
 ```
 
+When this error occurs, the application automatically:
+1. Calls the batch export API to get EMID and identification
+2. Uses the close batch API to close the open batch
+3. Retries the original country change request
+
+### Other Error Responses
+```xml
+<ResponseCode>XXX</ResponseCode>
+<ResponseText>Error description</ResponseText>
+```
+
+## Batch Closing Process
+
+When error code 175 is encountered, the following process occurs automatically:
+
+### Step 1: Batch Export
+- **Endpoint**: `https://webtest.chargeanywhere.com/apis/Transactions_Export.aspx`
+- **Method**: POST (form data)
+- **Parameters**: 
+  - `ClientKey`, `ClientSecret` (from environment)
+  - `DateFrom`, `DateTo` (New York timezone, current day -1 and current day)
+  - `Version`: "1.7"
+  - `Fields`: "EMID,TerminalId,Identification"
+
+### Step 2: Close Batch
+- **Endpoint**: `https://webtest.chargeanywhere.com/apis/api/Transaction`
+- **Method**: POST (JSON)
+- **Payload**:
+  ```json
+  {
+    "MerchantId": "{emid}",
+    "TerminalId": "{terminal_id}",
+    "Identification": "{identification}",
+    "TransactionType": "CloseBatch",
+    "VersionNumber": "2.6"
+  }
+  ```
+
+### Step 3: Retry Country Change
+- If batch close is successful (ResponseCode: "000"), the original country change is retried
+- If batch close fails, an error message is displayed
+
+## Timezone Handling
+
+The application uses New York timezone for batch export operations:
+- Current day and previous day are calculated in America/New_York timezone
+- Dates are formatted as mm/dd/yyyy as required by the API
+- Automatic timezone conversion ensures correct date boundaries
+
 ## Error Handling
 
-- **Form Validation**: Client-side and server-side validation for required fields
+- **Form Validation**: Client-side and server-side validation for required fields (MID, TID, Country)
 - **API Errors**: Handles network timeouts, HTTP errors, and API response errors
 - **XML Parsing**: Robust XML parsing with error handling for malformed responses
-- **User Feedback**: Clear error messages displayed in the UI
+- **Batch Operations**: Comprehensive error handling for batch export and close operations
+- **User Feedback**: Clear error messages displayed in the UI, including batch closing status
 
 ## Development
 
@@ -226,6 +289,16 @@ charge-anywhere-tools/
         └── app.js        # JavaScript functionality
 ```
 
+### Key Functions in app.py
+
+- `create_soap_request()` - Creates SOAP XML request for merchant update
+- `parse_soap_response()` - Parses SOAP API responses
+- `get_ny_timezone()` - Gets New York timezone for date calculations
+- `get_ny_dates()` - Calculates current and previous day in NY timezone
+- `get_batch_export_data()` - Fetches batch data for EMID and identification
+- `close_batch()` - Closes open batch using Transaction API
+- `update_country()` - Main endpoint with automatic batch closing logic
+
 ### Docker Configuration
 
 The Docker setup includes:
@@ -242,6 +315,7 @@ The application is designed to be easily extensible:
 1. **New Countries**: Add to the `COUNTRIES` dictionary in `app.py`
 2. **New API Methods**: Add new routes and SOAP request functions
 3. **New Form Fields**: Update the HTML template and form handling
+4. **New Batch Operations**: Extend the batch closing logic for other scenarios
 
 ## Security Notes
 
@@ -249,14 +323,16 @@ The application is designed to be easily extensible:
 - **HTTPS**: In production, ensure the application runs over HTTPS
 - **Input Validation**: All user inputs are validated on both client and server side
 - **Docker**: Container runs with non-root user for security
+- **API Keys**: CLIENT_KEY and CLIENT_SECRET should be kept secure
 
 ## Testing
 
 ### Local Testing
 1. Set up the environment variables in `.env`
 2. Run the Flask application
-3. Test with valid merchant IDs for your account
+3. Test with valid merchant IDs and terminal IDs for your account
 4. Check the API responses in the web interface
+5. Test the batch closing flow with a merchant that has an open batch
 
 ### Docker Testing
 ```bash
@@ -269,6 +345,14 @@ curl http://localhost:5000/health
 # View container logs
 docker-compose logs -f charge-anywhere-app
 ```
+
+### Testing Batch Closing Logic
+
+To test the automatic batch closing feature:
+1. Ensure you have credentials for a merchant with an open batch
+2. Use the terminal ID that corresponds to the merchant
+3. Attempt a country change - this should trigger error code 175
+4. Verify that the application automatically closes the batch and retries
 
 ## Troubleshooting
 
@@ -298,6 +382,12 @@ lsof -i :5000
 curl http://localhost:5000/health
 ```
 
+#### Batch closing failures
+- Verify CLIENT_KEY and CLIENT_SECRET are correctly set
+- Check that the terminal ID matches the merchant's terminal
+- Ensure the batch export API returns valid data
+- Check that the close batch API responds with "000" for success
+
 ## Production Deployment
 
 For production deployment, consider:
@@ -318,6 +408,9 @@ For production deployment, consider:
 
 5. **Monitoring**
    Add monitoring services like Prometheus/Grafana
+
+6. **Load Balancing**
+   For high availability, use multiple container instances
 
 ## License
 
