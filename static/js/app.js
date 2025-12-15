@@ -22,6 +22,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const formData = new FormData(form);
     const data = {
       merchant_id: formData.get("merchant_id"),
+      terminal_id: formData.get("terminal_id"),
       country: formData.get("country"),
     };
 
@@ -44,10 +45,27 @@ document.addEventListener("DOMContentLoaded", function () {
         resultContent.innerHTML = `
                     <div class="${alertClass}">
                         <h6>Merchant ID: ${result.merchant_id}</h6>
+                        <h6>Terminal ID: ${result.terminal_id}</h6>
                         <h6>Country: ${result.country}</h6>
                         <hr>
-                        <p><strong>Response Code:</strong> ${result.response_code}</p>
-                        <p><strong>Response Text:</strong> ${result.response_text}</p>
+                        <p><strong>Response Code:</strong> ${
+                          result.response_code
+                        }</p>
+                        <p><strong>Response Text:</strong> ${
+                          result.response_text
+                        }</p>
+                        ${
+                          result.batch_closed
+                            ? "<p><strong>Batch Status:</strong> Successfully closed before retry</p>"
+                            : ""
+                        }
+                        ${
+                          result.batch_close_error
+                            ? "<p><strong>Batch Close Error:</strong> " +
+                              result.batch_close_error +
+                              "</p>"
+                            : ""
+                        }
                     </div>
                 `;
         results.classList.remove("d-none");
@@ -72,17 +90,21 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Form validation
   const merchantIdInput = document.getElementById("merchant_id");
+  const terminalIdInput = document.getElementById("terminal_id");
   const countrySelect = document.getElementById("country");
 
   function validateForm() {
     const merchantId = merchantIdInput.value.trim();
+    const terminalId = terminalIdInput.value.trim();
     const country = countrySelect.value;
 
-    const isValid = merchantId.length > 0 && country.length > 0;
+    const isValid =
+      merchantId.length > 0 && terminalId.length > 0 && country.length > 0;
     submitBtn.disabled = !isValid;
   }
 
   merchantIdInput.addEventListener("input", validateForm);
+  terminalIdInput.addEventListener("input", validateForm);
   countrySelect.addEventListener("change", validateForm);
 
   // Initial validation
